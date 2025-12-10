@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { User, Briefcase, Upload, FileText, Check, Loader2, Shield, Lock } from "lucide-react";
+import { User, Briefcase, Upload, FileText, Check, Loader2, Shield, Lock, X, Files } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -21,11 +21,15 @@ const experienceLevels = [
   { value: "10+", label: "10+ years (Expert)" },
 ];
 
+type UploadMode = "single" | "bulk";
+
 export const ResumeUploadForm = () => {
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [uploadMode, setUploadMode] = useState<UploadMode>("single");
 
   const [formData, setFormData] = useState({
     firstName: "",
@@ -53,34 +57,6 @@ export const ResumeUploadForm = () => {
     setDragOver(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file && isValidFileType(file)) {
-      setUploadedFile(file);
-    } else {
-      toast({
-        title: "Invalid file type",
-        description: "Please upload a PDF, DOC, or DOCX file.",
-        variant: "destructive",
-      });
-    }
-  }, [toast]);
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && isValidFileType(file)) {
-      setUploadedFile(file);
-    } else if (file) {
-      toast({
-        title: "Invalid file type",
-        description: "Please upload a PDF, DOC, or DOCX file.",
-        variant: "destructive",
-      });
-    }
-  };
-
   const isValidFileType = (file: File) => {
     const validTypes = [
       "application/pdf",
@@ -90,13 +66,98 @@ export const ResumeUploadForm = () => {
     return validTypes.includes(file.type) && file.size <= 5 * 1024 * 1024;
   };
 
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    
+    if (uploadMode === "single") {
+      const file = e.dataTransfer.files[0];
+      if (file && isValidFileType(file)) {
+        setUploadedFile(file);
+      } else {
+        toast({
+          title: "Invalid file type",
+          description: "Please upload a PDF, DOC, or DOCX file (Max 5MB).",
+          variant: "destructive",
+        });
+      }
+    } else {
+      const files = Array.from(e.dataTransfer.files);
+      const validFiles = files.filter(isValidFileType);
+      const invalidCount = files.length - validFiles.length;
+      
+      if (validFiles.length > 0) {
+        setUploadedFiles((prev) => [...prev, ...validFiles]);
+      }
+      
+      if (invalidCount > 0) {
+        toast({
+          title: `${invalidCount} file(s) skipped`,
+          description: "Only PDF, DOC, DOCX files under 5MB are accepted.",
+          variant: "destructive",
+        });
+      }
+    }
+  }, [uploadMode, toast]);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    if (uploadMode === "single") {
+      const file = files[0];
+      if (file && isValidFileType(file)) {
+        setUploadedFile(file);
+      } else if (file) {
+        toast({
+          title: "Invalid file type",
+          description: "Please upload a PDF, DOC, or DOCX file (Max 5MB).",
+          variant: "destructive",
+        });
+      }
+    } else {
+      const fileArray = Array.from(files);
+      const validFiles = fileArray.filter(isValidFileType);
+      const invalidCount = fileArray.length - validFiles.length;
+      
+      if (validFiles.length > 0) {
+        setUploadedFiles((prev) => [...prev, ...validFiles]);
+      }
+      
+      if (invalidCount > 0) {
+        toast({
+          title: `${invalidCount} file(s) skipped`,
+          description: "Only PDF, DOC, DOCX files under 5MB are accepted.",
+          variant: "destructive",
+        });
+      }
+    }
+    
+    // Reset input
+    e.target.value = "";
+  };
+
+  const removeFile = (index: number) => {
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleModeChange = (mode: UploadMode) => {
+    setUploadMode(mode);
+    setUploadedFile(null);
+    setUploadedFiles([]);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!uploadedFile) {
+    const hasFiles = uploadMode === "single" ? uploadedFile : uploadedFiles.length > 0;
+    
+    if (!hasFiles) {
       toast({
         title: "Resume required",
-        description: "Please upload your resume before submitting.",
+        description: uploadMode === "single" 
+          ? "Please upload your resume before submitting."
+          : "Please upload at least one resume before submitting.",
         variant: "destructive",
       });
       return;
@@ -115,7 +176,16 @@ export const ResumeUploadForm = () => {
       formDataToSend.append("experience", formData.experience);
       formDataToSend.append("skills", formData.skills);
       formDataToSend.append("summary", formData.summary);
-      formDataToSend.append("resume", uploadedFile);
+      formDataToSend.append("uploadMode", uploadMode);
+      
+      if (uploadMode === "single" && uploadedFile) {
+        formDataToSend.append("resume", uploadedFile);
+      } else {
+        uploadedFiles.forEach((file, index) => {
+          formDataToSend.append(`resume_${index}`, file);
+        });
+        formDataToSend.append("resumeCount", uploadedFiles.length.toString());
+      }
 
       const response = await fetch("http://localhost:5678/webhook-test/resume-upload", {
         method: "POST",
@@ -123,9 +193,10 @@ export const ResumeUploadForm = () => {
       });
 
       if (response.ok) {
+        const fileCount = uploadMode === "single" ? 1 : uploadedFiles.length;
         toast({
-          title: "Application submitted!",
-          description: "Your resume has been successfully uploaded.",
+          title: "🎉 Application Submitted Successfully!",
+          description: `${fileCount} resume${fileCount > 1 ? 's have' : ' has'} been uploaded. We'll review your application and get back to you soon.`,
         });
         // Reset form
         setFormData({
@@ -140,6 +211,7 @@ export const ResumeUploadForm = () => {
           summary: "",
         });
         setUploadedFile(null);
+        setUploadedFiles([]);
       } else {
         throw new Error("Submission failed");
       }
@@ -165,7 +237,7 @@ export const ResumeUploadForm = () => {
       formData.jobTitle,
       formData.experience,
       formData.skills,
-      uploadedFile,
+      uploadMode === "single" ? uploadedFile : uploadedFiles.length > 0,
     ];
     const filled = fields.filter(Boolean).length;
     return Math.round((filled / fields.length) * 100);
@@ -174,7 +246,7 @@ export const ResumeUploadForm = () => {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Progress Bar */}
-      <div className="bg-card rounded-xl p-4 shadow-soft border border-border/50">
+      <div className="bg-card rounded-xl p-4 shadow-sm border border-border/50">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-medium text-muted-foreground">Application Progress</span>
           <span className="text-sm font-semibold text-primary">{progress}% Complete</span>
@@ -331,16 +403,61 @@ export const ResumeUploadForm = () => {
             <Upload className="w-5 h-5" />
           </div>
           <h2 className="section-title">Resume Upload</h2>
-          <span className="ml-auto px-3 py-1 bg-accent/10 text-accent text-xs font-medium rounded-full">
-            Bulk Upload
-          </span>
-          <span className="text-xs text-muted-foreground ml-2">1 coin per resume</span>
+        </div>
+
+        {/* Upload Mode Toggle */}
+        <div className="mb-6">
+          <label className="input-label mb-3 block">Upload Type</label>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => handleModeChange("single")}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all duration-200 ${
+                uploadMode === "single"
+                  ? "border-primary bg-primary/5 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:border-primary/50"
+              }`}
+            >
+              <FileText className="w-5 h-5" />
+              <div className="text-left">
+                <div className="font-medium">Single Upload</div>
+                <div className="text-xs opacity-70">Upload one resume</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeChange("bulk")}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all duration-200 ${
+                uploadMode === "bulk"
+                  ? "border-primary bg-primary/5 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:border-primary/50"
+              }`}
+            >
+              <Files className="w-5 h-5" />
+              <div className="text-left">
+                <div className="font-medium">Bulk Upload</div>
+                <div className="text-xs opacity-70">Upload multiple resumes</div>
+              </div>
+            </button>
+          </div>
+          {uploadMode === "bulk" && (
+            <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-accent/20 text-accent text-[10px] font-bold">1</span>
+              coin per resume
+            </p>
+          )}
         </div>
         
         <div>
-          <label className="input-label mb-4 block">Upload your resume</label>
+          <label className="input-label mb-4 block">
+            {uploadMode === "single" ? "Upload your resume" : "Upload your resumes"}
+          </label>
           <div
-            className={`upload-zone ${dragOver ? "drag-over" : ""} ${uploadedFile ? "border-accent bg-accent/5" : ""}`}
+            className={`upload-zone ${dragOver ? "drag-over" : ""} ${
+              (uploadMode === "single" && uploadedFile) || (uploadMode === "bulk" && uploadedFiles.length > 0)
+                ? "border-accent bg-accent/5"
+                : ""
+            }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -351,10 +468,11 @@ export const ResumeUploadForm = () => {
               type="file"
               className="hidden"
               accept=".pdf,.doc,.docx"
+              multiple={uploadMode === "bulk"}
               onChange={handleFileSelect}
             />
             
-            {uploadedFile ? (
+            {uploadMode === "single" && uploadedFile ? (
               <div className="flex flex-col items-center gap-3">
                 <div className="w-14 h-14 rounded-full bg-accent/10 flex items-center justify-center">
                   <Check className="w-7 h-7 text-accent" />
@@ -377,17 +495,63 @@ export const ResumeUploadForm = () => {
                   Remove and upload different file
                 </button>
               </div>
+            ) : uploadMode === "bulk" && uploadedFiles.length > 0 ? (
+              <div className="flex flex-col items-center gap-3 w-full" onClick={(e) => e.stopPropagation()}>
+                <div className="w-14 h-14 rounded-full bg-accent/10 flex items-center justify-center">
+                  <Files className="w-7 h-7 text-accent" />
+                </div>
+                <span className="font-medium text-foreground">
+                  {uploadedFiles.length} file{uploadedFiles.length > 1 ? "s" : ""} uploaded
+                </span>
+                <div className="w-full max-h-40 overflow-y-auto space-y-2 px-4">
+                  {uploadedFiles.map((file, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <span className="text-sm truncate">{file.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="p-1 hover:bg-destructive/10 rounded-full transition-colors"
+                        onClick={() => removeFile(index)}
+                      >
+                        <X className="w-4 h-4 text-destructive" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => document.getElementById("file-input")?.click()}
+                >
+                  Add More Files
+                </Button>
+              </div>
             ) : (
               <div className="flex flex-col items-center gap-3">
                 <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center animate-float">
-                  <Upload className="w-7 h-7 text-muted-foreground" />
+                  {uploadMode === "single" ? (
+                    <Upload className="w-7 h-7 text-muted-foreground" />
+                  ) : (
+                    <Files className="w-7 h-7 text-muted-foreground" />
+                  )}
                 </div>
                 <div>
-                  <span className="text-foreground font-medium">Drag and drop your file here</span>
+                  <span className="text-foreground font-medium">
+                    Drag and drop your file{uploadMode === "bulk" ? "s" : ""} here
+                  </span>
                   <span className="text-muted-foreground">, or click to browse</span>
                 </div>
                 <Button type="button" variant="outline" size="sm">
-                  Choose File
+                  Choose File{uploadMode === "bulk" ? "s" : ""}
                 </Button>
                 <span className="text-xs text-muted-foreground">
                   Supported formats: PDF, DOC, DOCX (Max 5MB each)
