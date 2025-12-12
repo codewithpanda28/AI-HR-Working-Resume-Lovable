@@ -382,7 +382,7 @@ const validateForm = (): boolean => {
         formDataToSend.append("resumeCount", uploadedFiles.length.toString());
       }
 
-      const response = await fetch("http://localhost:5678/webhook-test/resume-upload", {
+      const response = await fetch("https://n8n.srv1114630.hstgr.cloud/webhook/resume-upload", {
         method: "POST",
         body: formDataToSend,
       });
