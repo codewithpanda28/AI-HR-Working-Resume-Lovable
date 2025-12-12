@@ -13,9 +13,9 @@ const Index = () => {
           <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-3">
             Submit Your Application
           </h1>
-          <p className="text-muted-foreground text-lg max-w-md mx-auto">
+          {/* <p className="text-muted-foreground text-lg max-w-md mx-auto">
             Join our talent network with a streamlined application process designed to showcase your potential.
-          </p>
+          </p> */}
         </header>
 
         {/* Form */}

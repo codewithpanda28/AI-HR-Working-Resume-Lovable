@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { User, Briefcase, Upload, FileText, Check, Loader2, Shield, Lock, X, Files, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { User, Briefcase, Upload, FileText, Check, Loader2, Shield, Lock, X, Files, Eye, EyeOff, AlertCircle, Coins } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,7 @@ const experienceLevels = [
 ];
 
 type UploadMode = "single" | "bulk";
+const INITIAL_COINS = 1000;
 
 interface FormErrors {
   firstName?: string;
@@ -53,6 +54,7 @@ export const ResumeUploadForm = () => {
   const [showPreview, setShowPreview] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [coins, setCoins] = useState(INITIAL_COINS);
 
   const [formData, setFormData] = useState({
     firstName: "",
@@ -75,70 +77,47 @@ export const ResumeUploadForm = () => {
     };
   }, [previewUrl]);
 
-  const validateField = (field: string, value: string): string | undefined => {
-    switch (field) {
-      case "firstName":
-        if (!value.trim()) return "First name is required";
-        if (value.length < 2) return "First name must be at least 2 characters";
-        if (value.length > 50) return "First name must be less than 50 characters";
-        return undefined;
-      case "lastName":
-        if (!value.trim()) return "Last name is required";
-        if (value.length < 2) return "Last name must be at least 2 characters";
-        if (value.length > 50) return "Last name must be less than 50 characters";
-        return undefined;
-      case "email":
-        if (!value.trim()) return "Email is required";
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(value)) return "Please enter a valid email address";
-        return undefined;
-      case "phone":
-        if (!value.trim()) return "Phone number is required";
-        const phoneRegex = /^[\d\s\-\+\(\)]{10,20}$/;
-        if (!phoneRegex.test(value.replace(/\s/g, ""))) return "Please enter a valid phone number";
-        return undefined;
-      case "location":
-        if (!value.trim()) return "Location is required";
-        if (value.length < 3) return "Please enter a valid location";
-        return undefined;
-      case "jobTitle":
-        if (!value.trim()) return "Job title is required";
-        if (value.length < 2) return "Job title must be at least 2 characters";
-        return undefined;
-      case "experience":
-        if (!value) return "Please select your experience level";
-        return undefined;
-      case "skills":
-        if (!value.trim()) return "Skills are required";
-        if (value.length < 5) return "Please enter at least a few skills";
-        return undefined;
-      default:
-        return undefined;
+const validateField = (field: string, value: string): string | undefined => {
+  // Personal fields are optional for now; keep basic email format check if provided
+  switch (field) {
+    case "email":
+      if (!value.trim()) return undefined;
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(value)) return "Please enter a valid email address";
+      return undefined;
+    case "phone":
+      if (!value.trim()) return undefined;
+      const phoneRegex = /^[\d\s\-\+\(\)]{10,20}$/;
+      if (!phoneRegex.test(value.replace(/\s/g, ""))) return "Please enter a valid phone number";
+      return undefined;
+    default:
+      return undefined;
+  }
+};
+
+const validateForm = (): boolean => {
+  const newErrors: FormErrors = {};
+
+  // Only validate resume presence; other fields are optional
+  const hasFiles = uploadMode === "single" ? uploadedFile : uploadedFiles.length > 0;
+  if (!hasFiles) {
+    newErrors.resume = uploadMode === "single"
+      ? "Please upload your resume"
+      : "Please upload at least one resume";
+  }
+
+  // Validate optional email/phone only if provided
+  ["email", "phone"].forEach((key) => {
+    const value = formData[key as keyof typeof formData] as string;
+    const error = validateField(key, value);
+    if (error) {
+      newErrors[key as keyof FormErrors] = error;
     }
-  };
+  });
 
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {};
-    
-    Object.keys(formData).forEach((key) => {
-      if (key !== "summary") {
-        const error = validateField(key, formData[key as keyof typeof formData]);
-        if (error) {
-          newErrors[key as keyof FormErrors] = error;
-        }
-      }
-    });
-
-    const hasFiles = uploadMode === "single" ? uploadedFile : uploadedFiles.length > 0;
-    if (!hasFiles) {
-      newErrors.resume = uploadMode === "single" 
-        ? "Please upload your resume"
-        : "Please upload at least one resume";
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+  setErrors(newErrors);
+  return Object.keys(newErrors).length === 0;
+};
 
   const handleInputChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -175,41 +154,77 @@ export const ResumeUploadForm = () => {
     return validTypes.includes(file.type) && file.size <= 5 * 1024 * 1024;
   };
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    
-    if (uploadMode === "single") {
-      const file = e.dataTransfer.files[0];
-      if (file && isValidFileType(file)) {
-        setUploadedFile(file);
-        setErrors((prev) => ({ ...prev, resume: undefined }));
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      
+      if (uploadMode === "single") {
+        const file = e.dataTransfer.files[0];
+        if (!uploadedFile && coins <= 0) {
+          toast({
+            title: "Not enough coins",
+            description: "You need at least 1 coin to upload a resume.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        if (file && isValidFileType(file)) {
+          const shouldDeduct = !uploadedFile;
+          if (shouldDeduct) {
+            setCoins((prev) => Math.max(prev - 1, 0));
+          }
+          setUploadedFile(file);
+          setErrors((prev) => ({ ...prev, resume: undefined }));
+        } else {
+          toast({
+            title: "Invalid file type",
+            description: "Please upload a PDF, DOC, or DOCX file (Max 5MB).",
+            variant: "destructive",
+          });
+        }
       } else {
-        toast({
-          title: "Invalid file type",
-          description: "Please upload a PDF, DOC, or DOCX file (Max 5MB).",
-          variant: "destructive",
-        });
+        const files = Array.from(e.dataTransfer.files);
+        const validFiles = files.filter(isValidFileType);
+        const invalidCount = files.length - validFiles.length;
+        const affordableCount = Math.min(validFiles.length, coins);
+        const affordableFiles = validFiles.slice(0, affordableCount);
+        const skippedForCoins = validFiles.length - affordableFiles.length;
+        
+        if (affordableFiles.length > 0) {
+          setUploadedFiles((prev) => [...prev, ...affordableFiles]);
+          setCoins((prev) => Math.max(prev - affordableFiles.length, 0));
+          setErrors((prev) => ({ ...prev, resume: undefined }));
+        }
+        
+        if (invalidCount > 0) {
+          toast({
+            title: `${invalidCount} file(s) skipped`,
+            description: "Only PDF, DOC, DOCX files under 5MB are accepted.",
+            variant: "destructive",
+          });
+        }
+
+        if (skippedForCoins > 0) {
+          toast({
+            title: "Not enough coins",
+            description: `You can upload ${coins} more resume${coins === 1 ? "" : "s"}.`,
+            variant: "destructive",
+          });
+        }
+
+        if (affordableFiles.length === 0 && coins === 0) {
+          toast({
+            title: "No coins left",
+            description: "Add more coins to continue uploading resumes.",
+            variant: "destructive",
+          });
+        }
       }
-    } else {
-      const files = Array.from(e.dataTransfer.files);
-      const validFiles = files.filter(isValidFileType);
-      const invalidCount = files.length - validFiles.length;
-      
-      if (validFiles.length > 0) {
-        setUploadedFiles((prev) => [...prev, ...validFiles]);
-        setErrors((prev) => ({ ...prev, resume: undefined }));
-      }
-      
-      if (invalidCount > 0) {
-        toast({
-          title: `${invalidCount} file(s) skipped`,
-          description: "Only PDF, DOC, DOCX files under 5MB are accepted.",
-          variant: "destructive",
-        });
-      }
-    }
-  }, [uploadMode, toast]);
+    },
+    [uploadMode, toast, coins, uploadedFile],
+  );
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -217,7 +232,21 @@ export const ResumeUploadForm = () => {
 
     if (uploadMode === "single") {
       const file = files[0];
+      if (!uploadedFile && coins <= 0) {
+        toast({
+          title: "Not enough coins",
+          description: "You need at least 1 coin to upload a resume.",
+          variant: "destructive",
+        });
+        e.target.value = "";
+        return;
+      }
+
       if (file && isValidFileType(file)) {
+        const shouldDeduct = !uploadedFile;
+        if (shouldDeduct) {
+          setCoins((prev) => Math.max(prev - 1, 0));
+        }
         setUploadedFile(file);
         setErrors((prev) => ({ ...prev, resume: undefined }));
       } else if (file) {
@@ -231,9 +260,13 @@ export const ResumeUploadForm = () => {
       const fileArray = Array.from(files);
       const validFiles = fileArray.filter(isValidFileType);
       const invalidCount = fileArray.length - validFiles.length;
+      const affordableCount = Math.min(validFiles.length, coins);
+      const affordableFiles = validFiles.slice(0, affordableCount);
+      const skippedForCoins = validFiles.length - affordableFiles.length;
       
-      if (validFiles.length > 0) {
-        setUploadedFiles((prev) => [...prev, ...validFiles]);
+      if (affordableFiles.length > 0) {
+        setUploadedFiles((prev) => [...prev, ...affordableFiles]);
+        setCoins((prev) => Math.max(prev - affordableFiles.length, 0));
         setErrors((prev) => ({ ...prev, resume: undefined }));
       }
       
@@ -244,16 +277,43 @@ export const ResumeUploadForm = () => {
           variant: "destructive",
         });
       }
+
+      if (skippedForCoins > 0) {
+        toast({
+          title: "Not enough coins",
+          description: `You can upload ${coins} more resume${coins === 1 ? "" : "s"}.`,
+          variant: "destructive",
+        });
+      }
+
+      if (affordableFiles.length === 0 && coins === 0) {
+        toast({
+          title: "No coins left",
+          description: "Add more coins to continue uploading resumes.",
+          variant: "destructive",
+        });
+      }
     }
     
     e.target.value = "";
   };
 
   const removeFile = (index: number) => {
-    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
+    setUploadedFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      if (prev.length !== next.length) {
+        setCoins((coinBalance) => Math.min(INITIAL_COINS, coinBalance + 1));
+      }
+      return next;
+    });
   };
 
   const handleModeChange = (mode: UploadMode) => {
+    if (mode === uploadMode) return;
+    const refund = uploadMode === "single" ? (uploadedFile ? 1 : 0) : uploadedFiles.length;
+    if (refund > 0) {
+      setCoins((prev) => Math.min(INITIAL_COINS, prev + refund));
+    }
     setUploadMode(mode);
     setUploadedFile(null);
     setUploadedFiles([]);
@@ -576,7 +636,13 @@ export const ResumeUploadForm = () => {
 
           {/* Upload Mode Toggle */}
           <div className="mb-6">
-            <label className="input-label mb-3 block">Upload Type</label>
+            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+              <label className="input-label">Upload Type</label>
+              <div className="flex items-center gap-2 text-sm font-semibold px-3 py-1 rounded-full bg-primary/5 text-primary border border-primary/20">
+                <Coins className="w-4 h-4" />
+                <span>{coins} coin{coins === 1 ? "" : "s"} left</span>
+              </div>
+            </div>
             <div className="flex gap-3">
               <button
                 type="button"
@@ -590,7 +656,7 @@ export const ResumeUploadForm = () => {
                 <FileText className="w-5 h-5" />
                 <div className="text-left">
                   <div className="font-medium">Single Upload</div>
-                  <div className="text-xs opacity-70">Upload one resume</div>
+                  <div className="text-xs opacity-70">Upload one resume (1 coin)</div>
                 </div>
               </button>
               <button
@@ -605,16 +671,14 @@ export const ResumeUploadForm = () => {
                 <Files className="w-5 h-5" />
                 <div className="text-left">
                   <div className="font-medium">Bulk Upload</div>
-                  <div className="text-xs opacity-70">Upload multiple resumes</div>
+                  <div className="text-xs opacity-70">Upload multiple resumes (1 coin each)</div>
                 </div>
               </button>
             </div>
-            {uploadMode === "bulk" && (
-              <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
-                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-accent/20 text-accent text-[10px] font-bold">1</span>
-                coin per resume
-              </p>
-            )}
+            <p className="text-xs text-muted-foreground mt-2 flex items-center gap-1">
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-accent/20 text-accent text-[10px] font-bold">1</span>
+              coin per resume. You start with {INITIAL_COINS} coins.
+            </p>
           </div>
           
           <div>
@@ -676,6 +740,7 @@ export const ResumeUploadForm = () => {
                       onClick={(e) => {
                         e.stopPropagation();
                         setUploadedFile(null);
+                      setCoins((prev) => Math.min(INITIAL_COINS, prev + 1));
                       }}
                     >
                       <X className="w-4 h-4 mr-1" />
